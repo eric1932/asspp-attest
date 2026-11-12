@@ -34,9 +34,10 @@ quarantined the download, run
 A build with library validation turned on refuses plugins it did not sign;
 the fork's local builds do not turn it on.
 
-The first sign-in downloads Apple's components once (they take about 170 MB
-in the cache) and takes a few minutes. After that, each sign-in and each
-download request spends some seconds in the emulator.
+The first sign-in downloads Apple's components once (about 240 MB; around a
+minute on CI, longer on a slow connection). After that, each sign-in and each
+download request spends some seconds in the emulator (kbsync takes about 9 s
+on CI's Macs and in the iOS simulator).
 
 **Optional: the HTTP service, for a NAS or a Linux box.**
 
