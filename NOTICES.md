@@ -4,7 +4,10 @@ asspp-attest is GPL-2.0-only (see LICENSE). It builds on:
 
 - **ipatool** by Majd Alfhaily, MIT. attestd is compiled inside an ipatool
   checkout at `IPATOOL_COMMIT` and calls its internal `storeauth`,
-  `sap/assets` and `sap/machine` packages. https://github.com/majd/ipatool
+  `sap/assets` and `sap/machine` packages. For the macOS framework,
+  `scripts/fetch-ipatool.sh` adds one file to ipatool's Unicorn loader (a copy
+  of its iOS loader) and narrows one build constraint.
+  https://github.com/majd/ipatool
 - **Unicorn** (and the QEMU code inside it), GPL-2.0. The HTTP service loads
   libunicorn at runtime as ipatool does. The iOS framework statically links an
   interpreter-only build of `1rhino2/unicorn-tci`, with `qemu/target` from

@@ -49,7 +49,7 @@ Every request needs `Authorization: Bearer <token>`. Listen on localhost by
 default: `provision` carries Store session cookies and `kbsync` carries the
 DSID, so use it across a network only over TLS or a network you trust.
 
-## In-process transport (iOS)
+## In-process transport (iOS and macOS)
 
 The library exports one function, declared in
 [`embedded/AssppAttestPlugin.h`](../embedded/AssppAttestPlugin.h):
@@ -67,8 +67,9 @@ set and must be released with `release`.
 
 A host finds the function with `dlsym(RTLD_DEFAULT, "asspp_attestation_plugin_v1")`.
 If the library was not loaded at launch, the host `dlopen`s
-`Frameworks/AssppAttest.framework/AssppAttest` from its own bundle with
-`RTLD_NOW | RTLD_GLOBAL` first. `RTLD_GLOBAL` matters for this plugin: ipatool
+`AssppAttest.framework/AssppAttest` with `RTLD_NOW | RTLD_GLOBAL` first, from
+its own Frameworks folder and, on macOS, from
+`Application Support/Asspp/Plugins` in its (container's) home. `RTLD_GLOBAL` matters for this plugin: ipatool
 finds the Unicorn API with `dlsym(RTLD_DEFAULT, ...)`.
 
 Stock iOS cannot load native code downloaded at runtime, so an in-process

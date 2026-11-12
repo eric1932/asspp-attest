@@ -14,40 +14,40 @@ only needs the protocol, not this code.
 not accept emulation; this plugin works with clients that implement the
 protocol, today the [eric1932/Asspp](https://github.com/eric1932/Asspp) fork.
 
-## Two ways to run it
+## Install
 
-**macOS, Linux, a NAS: the HTTP service.**
-
-```sh
-./asspp-attestd-darwin-arm64 serve        # 127.0.0.1:18765
-./asspp-attestd-linux-amd64 serve --listen 192.168.50.11:18765 --state-dir /data/state
-```
-
-On first start it generates an API token, saves it as `<state-dir>/token` and
-prints it once. Point the client at it, for the fork's macOS build:
-
-```sh
-defaults write wiki.qaq.Asspp AttestationServiceURL http://127.0.0.1:18765
-defaults write wiki.qaq.Asspp AttestationServiceToken <token>
-```
-
-State is one file per device GUID in `--state-dir` (default
-`~/Library/Application Support/asspp-attestd` on macOS,
-`$XDG_CONFIG_HOME/asspp-attestd` on Linux), mode 0600. Apple's components and
-libunicorn go to ipatool's cache directory.
-
-**iOS: `AssppAttest.framework` inside the app.** Sideloaded apps cannot start
-helper processes, so the plugin runs in-process with an interpreter-only
-Unicorn (no JIT, works on a stock iPhone). Add the framework to a client IPA
-when you sign it:
+**iPhone and iPad: inject `AssppAttest-iOS.framework` when you sign.**
+Sideloaded apps cannot start helper processes, so the plugin runs inside the
+app with an interpreter-only Unicorn (no JIT, works on a stock iPhone). Add the
+framework to a client IPA when you sign it:
 
 - with your signing tool's framework or dylib injection, or
 - with `scripts/inject-ipa.sh Asspp.ipa AssppAttest.framework Asspp-attest.ipa`,
   then sign as usual.
 
+**Mac: drop `AssppAttest-macOS.framework` into the plugin folder.** Unzip it
+to `~/Library/Application Support/Asspp/Plugins/AssppAttest.framework` (for a
+sandboxed build, the same path inside
+`~/Library/Containers/wiki.qaq.Asspp/Data`) and restart the app. If macOS
+quarantined the download, run
+`xattr -dr com.apple.quarantine ~/Library/Application\ Support/Asspp/Plugins`.
+A build with library validation turned on refuses plugins it did not sign;
+the fork's local builds do not turn it on.
+
 The first sign-in downloads Apple's components once (they take about 170 MB
 in the cache) and takes a few minutes. After that, each sign-in and each
 download request spends some seconds in the emulator.
+
+**Optional: the HTTP service, for a NAS or a Linux box.**
+
+```sh
+./asspp-attestd-linux-amd64 serve --listen 192.168.50.11:18765 --state-dir /data/state
+```
+
+On first start it generates an API token, saves it as `<state-dir>/token` and
+prints it once. A client set to use it (`AttestationServiceURL` and
+`AttestationServiceToken` in the fork) falls back to it when no plugin is
+loaded. State is one file per device GUID in `--state-dir`, mode 0600.
 
 ## Licensing
 
@@ -71,10 +71,10 @@ scripts/fetch-ipatool.sh build/ipatool
 (cd build/ipatool && go test ./cmd/asspp-attestd && go build -o ../../asspp-attestd ./cmd/asspp-attestd)
 ```
 
-The iOS framework (`embedded/build-runtime.sh`) needs Xcode, CMake and the
+The framework (`embedded/build-runtime.sh`, iOS, iOS Simulator and macOS slices) needs Xcode, CMake and the
 Unicorn sources from `scripts/fetch-unicorn.sh`. CI
-([`framework.yml`](.github/workflows/framework.yml)) builds both slices and
-runs the plugin in an iOS simulator; pushing a `v*` tag publishes a release.
+([`framework.yml`](.github/workflows/framework.yml)) builds the slices and
+runs the plugin on macOS and in an iOS simulator; pushing a `v*` tag publishes a release.
 
 ## Layout
 

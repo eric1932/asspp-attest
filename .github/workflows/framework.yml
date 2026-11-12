@@ -1,8 +1,9 @@
 name: framework
 
 # AssppAttest.framework: asspp-attestd as an in-process plugin with an
-# interpreter-only Unicorn, for iOS. The simulator slice is exercised in an iOS
-# simulator through the plugin table with kbsync, which needs no Apple account.
+# interpreter-only Unicorn, for iOS and macOS. The macOS slice runs natively and
+# the simulator slice in an iOS simulator, both through the plugin table with
+# kbsync, which needs no Apple account.
 
 on:
   workflow_dispatch:
@@ -59,6 +60,23 @@ jobs:
           embedded/build-runtime.sh build/ipatool "$UNICORN_SOURCE" \
             build/device iphoneos arm64-apple-ios16.0 "$VERSION" "$IPATOOL_COMMIT"
 
+      - name: Build the macOS slice
+        run: |
+          embedded/build-runtime.sh build/ipatool "$UNICORN_SOURCE" \
+            build/macos macosx arm64-apple-macos15.0 "$VERSION" "$IPATOOL_COMMIT"
+
+      - name: Run kbsync on macOS
+        if: ${{ format('{0}', inputs.simulator_test) != 'false' }}
+        run: |
+          set -euo pipefail
+          sdk=$(xcrun --sdk macosx --show-sdk-path)
+          clang -target arm64-apple-macos15.0 -isysroot "$sdk" -I embedded embedded/harness.c \
+            -F "$PWD/build/macos" -framework AssppAttest -Wl,-rpath,"$PWD/build/macos" \
+            -o build/macos/harness
+          home="$PWD/build/macos/home"
+          mkdir -p "$home/Library/Caches" "$home/state"
+          HOME="$home" build/macos/harness "$home/state" 3
+
       - name: Run kbsync in an iOS simulator
         # A push leaves inputs empty; only an explicit false skips the test.
         if: ${{ format('{0}', inputs.simulator_test) != 'false' }}
@@ -95,10 +113,13 @@ jobs:
           xcodebuild -create-xcframework \
             -framework build/device/AssppAttest.framework \
             -framework build/simulator/AssppAttest.framework \
+            -framework build/macos/AssppAttest.framework \
             -output build/AssppAttest.xcframework
           (cd build && ditto -c -k --keepParent AssppAttest.xcframework ../dist/AssppAttest.xcframework.zip)
-          # The device framework alone, for injecting into an IPA.
-          (cd build/device && ditto -c -k --keepParent AssppAttest.framework ../../dist/AssppAttest.framework.zip)
+          # Single frameworks: the iPhone one for injecting into an IPA, the Mac one
+          # for an Asspp plugin folder.
+          (cd build/device && ditto -c -k --keepParent AssppAttest.framework ../../dist/AssppAttest-iOS.framework.zip)
+          (cd build/macos && ditto -c -k --keepParent AssppAttest.framework ../../dist/AssppAttest-macOS.framework.zip)
           cp build/unicorn/unicorn-source.tar.gz dist/
           cp LICENSE NOTICES.md dist/NOTICES/
           cp "$(go env GOROOT)/LICENSE" dist/NOTICES/Go-LICENSE
@@ -106,7 +127,7 @@ jobs:
           cp build/unicorn/unicorn-tci/unicorn-engine-sys-tci/COPYING dist/NOTICES/unicorn-COPYING
           (cd dist && ditto -c -k --keepParent NOTICES NOTICES.zip && rm -rf NOTICES)
           ls -l dist
-          shasum -a 256 build/*/AssppAttest.framework/AssppAttest
+          shasum -a 256 build/device/AssppAttest.framework/AssppAttest build/simulator/AssppAttest.framework/AssppAttest build/macos/AssppAttest.framework/Versions/A/AssppAttest
 
       - name: Upload
         uses: actions/upload-artifact@v4
