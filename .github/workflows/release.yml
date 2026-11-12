@@ -1,0 +1,53 @@
+name: release
+
+# Pushing a tag v* builds everything and publishes a GitHub release with the
+# service binaries, the iOS framework, the exact Unicorn sources it was built
+# from, and checksums. Never an Asspp IPA: see the README.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  service:
+    uses: ./.github/workflows/service.yml
+    with:
+      version: ${{ github.ref_name }}
+
+  framework:
+    uses: ./.github/workflows/framework.yml
+    with:
+      simulator_test: true
+      version: ${{ github.ref_name }}
+
+  publish:
+    needs: [service, framework]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          chmod +x asspp-attestd-*
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" $prerelease \
+            --notes "Service binaries for macOS and Linux, AssppAttest.framework for iOS, and the exact Unicorn sources the framework was built from. See the README for setup. GPL-2.0-only." \
+            -- *

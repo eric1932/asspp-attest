@@ -1,0 +1,71 @@
+name: service
+
+# asspp-attestd, the HTTP service for macOS, Linux and NAS boxes. It loads
+# libunicorn at runtime (ipatool downloads it), so the binaries contain no
+# Unicorn code.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, goos: darwin, goarch: arm64 }
+          - { os: ubuntu-24.04, goos: linux, goarch: amd64 }
+          - { os: ubuntu-24.04-arm, goos: linux, goarch: arm64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned ipatool and add asspp-attestd
+        run: echo "IPATOOL_COMMIT=$(scripts/fetch-ipatool.sh build/ipatool)" >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: build/ipatool/go.mod
+          cache-dependency-path: build/ipatool/go.sum
+
+      - name: Vet and test
+        working-directory: build/ipatool
+        run: |
+          set -euo pipefail
+          go vet ./cmd/asspp-attestd
+          if [ "$RUNNER_OS" = macOS ]; then
+            CGO_ENABLED=1 go vet -tags asspp_embedded ./cmd/asspp-attestd
+          fi
+          go test -count=1 ./cmd/asspp-attestd
+
+      - name: Build
+        working-directory: build/ipatool
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION:-${GITHUB_SHA::7}}"
+          out="../../dist/asspp-attestd-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p ../../dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${version} -X main.ipatoolCommit=${IPATOOL_COMMIT}" \
+            -o "$out" ./cmd/asspp-attestd
+          file "$out"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: asspp-attestd-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/

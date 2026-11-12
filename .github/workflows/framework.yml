@@ -1,0 +1,115 @@
+name: framework
+
+# AssppAttest.framework: asspp-attestd as an in-process plugin with an
+# interpreter-only Unicorn, for iOS. The simulator slice is exercised in an iOS
+# simulator through the plugin table with kbsync, which needs no Apple account.
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulator_test:
+        description: "Run kbsync in an iOS simulator (about ten minutes, mostly downloading Apple's components)"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      simulator_test:
+        type: boolean
+        default: true
+      version:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned ipatool and add asspp-attestd
+        run: echo "IPATOOL_COMMIT=$(scripts/fetch-ipatool.sh build/ipatool)" >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: build/ipatool/go.mod
+          cache-dependency-path: build/ipatool/go.sum
+
+      - name: Fetch pinned interpreter-only Unicorn sources
+        run: echo "UNICORN_SOURCE=$(scripts/fetch-unicorn.sh build/unicorn)" >> "$GITHUB_ENV"
+
+      - name: Pick the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: echo "VERSION=${VERSION:-${GITHUB_SHA::7}}" >> "$GITHUB_ENV"
+
+      - name: Build the simulator slice
+        run: |
+          embedded/build-runtime.sh build/ipatool "$UNICORN_SOURCE" \
+            build/simulator iphonesimulator arm64-apple-ios16.0-simulator "$VERSION" "$IPATOOL_COMMIT"
+
+      - name: Build the device slice
+        run: |
+          embedded/build-runtime.sh build/ipatool "$UNICORN_SOURCE" \
+            build/device iphoneos arm64-apple-ios16.0 "$VERSION" "$IPATOOL_COMMIT"
+
+      - name: Run kbsync in an iOS simulator
+        # A push leaves inputs empty; only an explicit false skips the test.
+        if: ${{ format('{0}', inputs.simulator_test) != 'false' }}
+        run: |
+          set -euo pipefail
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          xcrun --sdk iphonesimulator clang -target arm64-apple-ios16.0-simulator -isysroot "$sdk" \
+            -I embedded embedded/harness.c \
+            -F "$PWD/build/simulator" -framework AssppAttest -Wl,-rpath,"$PWD/build/simulator" \
+            -o build/simulator/harness
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          runtimes = json.load(sys.stdin)["devices"]
+          for runtime in sorted(runtimes, reverse=True):
+              if "iOS" not in runtime:
+                  continue
+              for device in runtimes[runtime]:
+                  if "iPhone" in device["name"]:
+                      print(device["udid"])
+                      sys.exit(0)
+          sys.exit("no iPhone simulator available")
+          ')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          home="$PWD/build/simulator/home"
+          mkdir -p "$home/Library/Caches" "$home/state"
+          SIMCTL_CHILD_HOME="$home" xcrun simctl spawn "$udid" "$PWD/build/simulator/harness" "$home/state" 3
+          xcrun simctl shutdown "$udid"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist/NOTICES
+          xcodebuild -create-xcframework \
+            -framework build/device/AssppAttest.framework \
+            -framework build/simulator/AssppAttest.framework \
+            -output build/AssppAttest.xcframework
+          (cd build && ditto -c -k --keepParent AssppAttest.xcframework ../dist/AssppAttest.xcframework.zip)
+          # The device framework alone, for injecting into an IPA.
+          (cd build/device && ditto -c -k --keepParent AssppAttest.framework ../../dist/AssppAttest.framework.zip)
+          cp build/unicorn/unicorn-source.tar.gz dist/
+          cp LICENSE NOTICES.md dist/NOTICES/
+          cp "$(go env GOROOT)/LICENSE" dist/NOTICES/Go-LICENSE
+          cp build/ipatool/LICENSE dist/NOTICES/ipatool-LICENSE
+          cp build/unicorn/unicorn-tci/unicorn-engine-sys-tci/COPYING dist/NOTICES/unicorn-COPYING
+          (cd dist && ditto -c -k --keepParent NOTICES NOTICES.zip && rm -rf NOTICES)
+          ls -l dist
+          shasum -a 256 build/*/AssppAttest.framework/AssppAttest
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: AssppAttest
+          path: dist/

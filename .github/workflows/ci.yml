@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service:
+    uses: ./.github/workflows/service.yml
+
+  framework:
+    uses: ./.github/workflows/framework.yml
+    with:
+      simulator_test: true
