@@ -1,0 +1,65 @@
+name: ipatool update
+
+# Once a month, and on demand: if ipatool has a release newer than
+# IPATOOL_COMMIT, open a pull request that moves the pin and run CI on it.
+# When the pin is current nothing happens, so there is nothing to read.
+
+on:
+  schedule:
+    - cron: "17 3 1 * *" # 03:17 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: ipatool-update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare with ipatool's latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < IPATOOL_COMMIT)
+          tag=$(gh api repos/majd/ipatool/releases/latest --jq .tag_name)
+          latest=$(gh api "repos/majd/ipatool/commits/$tag" --jq .sha)
+          echo "pinned $current; latest release $tag is $latest"
+
+          # "ahead" or "identical": the pin already contains that release.
+          status=$(gh api "repos/majd/ipatool/compare/$latest...$current" --jq .status)
+          if [ "$status" = ahead ] || [ "$status" = identical ]; then
+            echo "up to date"
+            exit 0
+          fi
+
+          branch="ipatool/$tag"
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" != 0 ]; then
+            echo "a pull request for $tag is already open"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          echo "$latest" > IPATOOL_COMMIT
+          git commit -qam "Build against ipatool $tag"
+          git push -qf origin "$branch"
+
+          gh pr create --head "$branch" --title "Build against ipatool $tag" --body "ipatool released [$tag](https://github.com/majd/ipatool/releases/tag/$tag); this moves \`IPATOOL_COMMIT\` to it.
+
+          CI runs on this branch (the commit's checks): the service builds and tests, and the framework runs kbsync on macOS and in the iOS simulator. If it is green, merge and push a new \`v*\` tag to release. If ipatool changed an internal API, the build says where."
+
+          # Pull requests opened with GITHUB_TOKEN start no workflows, so run CI on the branch directly.
+          gh workflow run ci.yml --ref "$branch"
